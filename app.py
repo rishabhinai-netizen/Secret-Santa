@@ -18,7 +18,6 @@ supabase: Client = create_client(url, key)
 st.set_page_config(page_title="Team Secret Santa", page_icon="🎅", layout="centered")
 
 # --- 2. HIDE STREAMLIT UI (STEALTH MODE) ---
-# This CSS hides the top menu, footer, and 'Deploy' button so users can't mess with settings
 hide_streamlit_style = """
             <style>
             #MainMenu {visibility: hidden;}
@@ -52,12 +51,10 @@ def get_user_by_email(email):
     return res.data[0] if res.data else None
 
 def get_all_participants_names():
-    # Only get non-admins for the guessing dropdown
     res = supabase.table('participants').select('name, email').eq('is_admin', False).execute()
     return res.data
 
 def run_assignment():
-    # Exclude Admin from the shuffle
     users = supabase.table('participants').select('email').eq('is_admin', False).execute()
     emails = [u['email'] for u in users.data]
     
@@ -71,7 +68,6 @@ def run_assignment():
     attempts = 0
     while True:
         random.shuffle(recipients)
-        # Ensure no one is assigned themselves
         if all(s != r for s, r in zip(santas, recipients)):
             break
         attempts += 1
@@ -83,7 +79,6 @@ def run_assignment():
     for s, r in zip(santas, recipients):
         data.append({'santa_email': s, 'recipient_email': r})
     
-    # Safe delete old assignments if they exist
     try:
         supabase.table('assignments').delete().neq('status', 'impossible').execute()
     except:
@@ -158,7 +153,6 @@ else:
         
         col1, col2 = st.columns(2)
         with col1:
-            # SAFETY LOCK: Once game starts, you might want to comment out this button to prevent accidental reshuffle
             if st.button("Generate Assignments (Exclude Me)"):
                 run_assignment()
             
@@ -175,7 +169,6 @@ else:
                      st.rerun()
 
         with col2:
-             # DETAILED TRACKER
              st.write("**Participant Status**")
              all_users = supabase.table('participants').select('email, name').eq('is_admin', False).execute().data
              all_assigns = supabase.table('assignments').select('*').execute().data
@@ -189,7 +182,6 @@ else:
                  guess_made = "No"
                  
                  if assign:
-                     # Check if THEIR santa set a clue
                      their_santa_row = next((a for a in all_assigns if a['santa_email'] == u['email']), None)
                      if their_santa_row and their_santa_row.get('santa_clue_1'):
                          santa_clue = "✅"
@@ -216,32 +208,28 @@ else:
     # --- PARTICIPANT VIEW ---
     if not user['is_admin']:
         
-        # 1. WAITING ROOM (LOBBY) LOGIC
+        # 1. WAITING ROOM (LOBBY)
         if stage == 'signup':
             st.subheader("☕ The Waiting Room")
             st.info("The game hasn't started yet. Waiting for everyone to sign up!")
-            
             st.write("### Who is already here?")
-            # Fetch list of joined users to show community feeling
             participants = supabase.table('participants').select('name').eq('is_admin', False).execute().data
             for p in participants:
                 st.write(f"- {p['name']}")
-                
             st.caption("Refresh this page occasionally to check if the game has started.")
-            st.stop() # STOP EXECUTION HERE if in signup mode
+            st.stop()
 
-        # 2. GAME STARTED LOGIC
+        # 2. GAME STARTED
         assignment = get_assignment(user['email'])
         if not assignment:
             st.error("The game has started, but you don't have a Santa Assignment.")
-            st.write("Possible reasons:")
-            st.write("1. You signed up LATE (after Admin generated pairs).")
-            st.write("2. You are the Admin account logging in as a user.")
+            st.write("Possible reasons: Signed up late or using Admin account.")
             st.stop()
             
         target = get_user_by_email(assignment['recipient_email'])
         
-        tab_santa, tab_recipient, tab_leaderboard = st.tabs(["🎅 My Mission", "🎁 My Gift", "🏆 Leaderboard"])
+        # --- TAB NAVIGATION (UPDATED WITH HELP TAB) ---
+        tab_santa, tab_recipient, tab_leaderboard, tab_help = st.tabs(["🎅 My Mission", "🎁 My Gift", "🏆 Leaderboard", "❓ How to Play"])
 
         # --- TAB 1: SANTA MISSION ---
         with tab_santa:
@@ -285,7 +273,6 @@ else:
                          st.rerun()
 
                 elif status in ['opened', 'revealed']:
-                    # GAME ON!
                     st.success("Gift Opened! Now... Who sent it?")
                     
                     st.write("#### 🕵️ Clue from your Santa:")
@@ -296,7 +283,6 @@ else:
                     
                     st.write("---")
                     
-                    # GUESSING INTERFACE
                     if not my_row.get('is_correct_guess') and guesses_used < 2:
                         st.write("#### ⚡ Fastest Finger First!")
                         
@@ -307,7 +293,6 @@ else:
                             st.error(f"Your previous guess ({my_row.get('first_wrong_guess')}) was wrong.")
 
                         people = get_all_participants_names()
-                        # FILTER: Exclude Self AND Previous Wrong Guess
                         options = {
                             p['name']: p['email'] 
                             for p in people 
@@ -361,7 +346,6 @@ else:
             st.subheader("🏆 Speed Guessing Leaderboard")
             st.caption("Top 10 Fastest Correct Guesses get a prize!")
             
-            # Safe Fetch: Get all, filter in Python to avoid timestamp errors
             response = supabase.table('assignments').select('recipient_email, guess_timestamp, is_correct_guess').execute()
             
             if not response.data:
@@ -380,8 +364,40 @@ else:
                              rank = idx + 1
                              medal = "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else f"#{rank}"
                              if rank > 10: medal = "❌"
-                             
                              st.write(f"### {medal} {user_info['name']}")
                              if rank == 10:
                                  st.divider()
                                  st.caption("--- PRIZE CUTOFF ---")
+
+        # --- TAB 4: SOP / HELP MANUAL ---
+        with tab_help:
+            st.header("📖 How to Play")
+            
+            st.info("👋 **Welcome to the Team Secret Santa!**\n\nYour goal: Give a great gift, keep your identity secret, and guess who your Santa is!")
+            
+            st.subheader("1️⃣ Before the Event")
+            st.markdown("""
+            * **Check 'My Mission':** See who your target is and read their clues.
+            * **Leave a Clue:** In the 'My Mission' tab, write ONE clue about yourself. This is the **only** hint your target will get!
+            * **Buy the Gift:** Bring it to the event wrapped and labeled.
+            """)
+            
+            st.subheader("2️⃣ On Event Day")
+            st.markdown("""
+            * **Step A:** When you hold the physical gift box, click **'📦 I have RECEIVED'**.
+            * **Step B:** Unwrap the gift! Then click **'🎁 I have OPENED'**.
+            * **Step C:** The app will reveal **Santa's Clue** to you.
+            """)
+            
+            st.subheader("3️⃣ The Speed Game")
+            st.warning("⚡ **This is a race!**")
+            st.markdown("""
+            * Once you see the clue, guess who your Santa is immediately.
+            * **Top 10 Fastest Correct Guessers** win an extra prize!
+            * You have **2 Chances**.
+                * Guess 1 Wrong? You get one more try.
+                * Guess 2 Wrong? You are out!
+            """)
+            
+            st.subheader("4️⃣ The Grand Reveal")
+            st.success("🎉 Once everyone has guessed, the Admin will press the big red button and all identities will be revealed!")
