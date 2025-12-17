@@ -3,6 +3,7 @@ from supabase import create_client, Client
 import random
 import time
 from datetime import datetime, timezone
+import pandas as pd
 
 # --- SETUP ---
 try:
@@ -14,7 +15,7 @@ except:
 
 supabase: Client = create_client(url, key)
 
-st.set_page_config(page_title="Team Secret Santa", page_icon="🎅")
+st.set_page_config(page_title="Team Secret Santa", page_icon="🎅", layout="centered")
 
 # --- FUNCTIONS ---
 def get_config(key):
@@ -39,12 +40,10 @@ def get_user_by_email(email):
     return res.data[0] if res.data else None
 
 def get_all_participants_names():
-    # Helper to get list of names for the dropdown
     res = supabase.table('participants').select('name, email').eq('is_admin', False).execute()
     return res.data
 
 def run_assignment():
-    # 1. Fetch only NON-ADMIN participants
     users = supabase.table('participants').select('email').eq('is_admin', False).execute()
     emails = [u['email'] for u in users.data]
     
@@ -69,15 +68,14 @@ def run_assignment():
     for s, r in zip(santas, recipients):
         data.append({'santa_email': s, 'recipient_email': r})
     
-    # Clear old assignments safely
     try:
         supabase.table('assignments').delete().neq('status', 'impossible').execute()
     except:
-        pass # Handle table empty case
+        pass 
     
     supabase.table('assignments').insert(data).execute()
     set_config('stage', 'clue_1')
-    st.success(f"Assignments generated for {len(emails)} people! (Admin excluded)")
+    st.success(f"Assignments generated for {len(emails)} people!")
 
 # --- UI ---
 st.title("🎄 Team Secret Santa")
@@ -101,13 +99,17 @@ if not st.session_state.user:
                 st.error("Invalid email or passphrase")
 
     with tab2:
-        st.caption("Admin account is strictly for management. Admins do not participate.")
+        st.caption("Admin account is strictly for management.")
         new_name = st.text_input("Full Name")
         new_email = st.text_input("Email", key="signup_email").lower().strip()
         new_phrase = st.text_input("Create Passphrase", type="password")
-        c1 = st.text_input("Target Clue 1: A hobby")
-        c2 = st.text_input("Target Clue 2: A specific like")
-        c3 = st.text_input("Target Clue 3: Your vibe")
+        
+        st.write("---")
+        st.write("📝 **Tell us about yourself (so your Santa can know you):**")
+        c1 = st.text_input("Clue 1: A hobby")
+        c2 = st.text_input("Clue 2: What are you most famous for in office?")
+        c3 = st.text_input("Clue 3: Your vibe (funny/joyful)")
+        
         consent = st.checkbox("I promise to play nicely.")
         
         if st.button("Join"):
@@ -148,22 +150,56 @@ else:
             if st.button("Update Stage"):
                 set_config('stage', new_stage)
                 st.rerun()
-
-        with col2:
-             # Leaderboard Preview
-             st.write("**Assignments Status**")
-             cnt = supabase.table('assignments').select('status', count='exact').execute().count
-             st.metric("Total Pairs", cnt)
-
-             if stage in ['event_day', 'grand_reveal']:
+                
+            if stage in ['event_day', 'grand_reveal']:
                  st.write("---")
                  if st.button("🚀 TRIGGER FINAL REVEAL"):
                      set_config('stage', 'grand_reveal')
                      st.rerun()
 
+        with col2:
+             # DETAILED TRACKER
+             st.write("**Participant Status Tracker**")
+             
+             # Fetch data merging participants and assignments
+             # Since Supabase join is tricky in simple client, we fetch both and merge in Python
+             all_users = supabase.table('participants').select('email, name').eq('is_admin', False).execute().data
+             all_assigns = supabase.table('assignments').select('*').execute().data
+             
+             status_data = []
+             for u in all_users:
+                 assign = next((a for a in all_assigns if a['recipient_email'] == u['email']), None)
+                 status = "Not Assigned"
+                 santa_clue = "❌"
+                 gift_status = "Waiting"
+                 guess_made = "No"
+                 
+                 if assign:
+                     # Check if THEIR santa set a clue
+                     their_santa_row = next((a for a in all_assigns if a['santa_email'] == u['email']), None)
+                     if their_santa_row and their_santa_row.get('santa_clue_1'):
+                         santa_clue = "✅"
+                     
+                     status = assign['status']
+                     if assign['status'] == 'received': gift_status = "Received 📦"
+                     if assign['status'] in ['opened', 'revealed']: gift_status = "Opened 🎁"
+                     
+                     if assign.get('guess_count', 0) > 0:
+                         guess_made = "Yes"
+                 
+                 status_data.append({
+                     "Name": u['name'],
+                     "Santa Clue Set?": santa_clue,
+                     "Gift Status": gift_status,
+                     "Guessed?": guess_made
+                 })
+             
+             df = pd.DataFrame(status_data)
+             st.dataframe(df, hide_index=True)
+
     st.divider()
 
-    # --- USER DASHBOARD (If not admin) ---
+    # --- USER DASHBOARD ---
     if not user['is_admin']:
         
         if stage == 'signup':
@@ -177,37 +213,39 @@ else:
             
         target = get_user_by_email(assignment['recipient_email'])
         
-        # TABS for Organized View
         tab_santa, tab_recipient, tab_leaderboard = st.tabs(["🎅 My Mission", "🎁 My Gift", "🏆 Leaderboard"])
 
         # --- TAB 1: SANTA MISSION ---
         with tab_santa:
-            st.subheader(f"Target: {target['name'] if stage in ['name_reveal', 'event_day', 'grand_reveal'] else '???'}")
-            
-            # Show Target Clues
+            # COPY UPDATE: "You are the Secret Santa for..."
+            if stage in ['name_reveal', 'event_day', 'grand_reveal']:
+                st.success(f"You are the Secret Santa for **{target['name']}**! Excited? 🤩")
+            else:
+                st.write("🕵️ **Target Identity: HIDDEN**")
+
             st.caption("Clues provided by your target:")
-            if stage != 'signup': st.info(f"1. {target['clue_1']}")
-            if stage not in ['signup', 'clue_1']: st.info(f"2. {target['clue_2']}")
-            if stage == 'clue_3' or stage in ['name_reveal', 'event_day', 'grand_reveal']: st.info(f"3. {target['clue_3']}")
+            if stage != 'signup': st.info(f"1. Hobby: {target['clue_1']}")
+            if stage not in ['signup', 'clue_1']: st.info(f"2. Famous For: {target['clue_2']}")
+            if stage == 'clue_3' or stage in ['name_reveal', 'event_day', 'grand_reveal']: st.info(f"3. Vibe: {target['clue_3']}")
             
             st.divider()
-            st.write("🕵️ **Provide Clues About YOURSELF**")
-            st.caption("Your target will see these after they open the gift to guess who you are.")
+            # CHANGE: Only 1 Clue
+            st.write("🕵️ **Provide 1 Clue About YOURSELF**")
+            st.caption("Your target will see this after they open the gift to guess who you are.")
             
-            sc1 = st.text_input("Self Clue 1", value=assignment.get('santa_clue_1') or "")
-            sc2 = st.text_input("Self Clue 2", value=assignment.get('santa_clue_2') or "")
-            sc3 = st.text_input("Self Clue 3", value=assignment.get('santa_clue_3') or "")
+            sc1 = st.text_input("Your Clue", value=assignment.get('santa_clue_1') or "")
             
-            if st.button("Save My Identity Clues"):
+            if st.button("Save My Identity Clue"):
                 supabase.table('assignments').update({
-                    'santa_clue_1': sc1, 'santa_clue_2': sc2, 'santa_clue_3': sc3
+                    'santa_clue_1': sc1
                 }).eq('santa_email', user['email']).execute()
-                st.toast("Clues Saved!")
+                st.toast("Clue Saved!")
 
         # --- TAB 2: RECIPIENT BOX ---
         with tab_recipient:
             my_row = supabase.table('assignments').select('*').eq('recipient_email', user['email']).execute().data[0]
             status = my_row['status']
+            guesses_used = my_row.get('guess_count', 0)
             
             if stage == 'event_day' or stage == 'grand_reveal':
                 if status == 'assigned':
@@ -224,23 +262,34 @@ else:
                     # GAME ON!
                     st.success("Gift Opened! Now... Who sent it?")
                     
-                    # 1. Show Santa's Self Clues
-                    st.write("#### 🕵️ Clues about your Santa:")
-                    if my_row['santa_clue_1']: st.write(f"- {my_row['santa_clue_1']}")
-                    else: st.write("- (Santa left no clue 1)")
-                    if my_row['santa_clue_2']: st.write(f"- {my_row['santa_clue_2']}")
-                    if my_row['santa_clue_3']: st.write(f"- {my_row['santa_clue_3']}")
+                    st.write("#### 🕵️ Clue from your Santa:")
+                    if my_row['santa_clue_1']: 
+                        st.info(f"\"{my_row['santa_clue_1']}\"")
+                    else: 
+                        st.warning("(Santa left no clue!)")
                     
                     st.write("---")
                     
-                    # 2. GUESSING INTERFACE
-                    if not my_row['guess_email']:
-                        st.write("#### ⚡ Fastest Finger First!")
-                        st.caption("Guess correctly and quickly to win an extra prize. You only get ONE guess.")
+                    # 2. GUESSING INTERFACE (UPDATED)
+                    if not my_row.get('is_correct_guess') and guesses_used < 2:
                         
+                        st.write("#### ⚡ Fastest Finger First!")
+                        
+                        if guesses_used == 0:
+                            st.caption("You have **2 Chances**. Make them count!")
+                        elif guesses_used == 1:
+                            st.warning("⚠️ LAST CHANCE! Think carefully.")
+                            st.error(f"Your previous guess ({my_row.get('first_wrong_guess')}) was wrong.")
+
                         people = get_all_participants_names()
-                        # Create dict for dropdown {Name: Email}
-                        options = {p['name']: p['email'] for p in people}
+                        # FILTER: Exclude Self AND Previous Wrong Guess
+                        options = {
+                            p['name']: p['email'] 
+                            for p in people 
+                            if p['email'] != user['email'] 
+                            and p['email'] != my_row.get('first_wrong_guess')
+                        }
+                        
                         guess_name = st.selectbox("Who is your Santa?", ["Select..."] + list(options.keys()))
                         
                         if st.button("🔒 Lock In Guess"):
@@ -248,45 +297,53 @@ else:
                                 guessed_email = options[guess_name]
                                 is_correct = (guessed_email == my_row['santa_email'])
                                 
-                                # Record Guess & Time
-                                supabase.table('assignments').update({
-                                    'guess_email': guessed_email,
-                                    'is_correct_guess': is_correct,
-                                    'guess_timestamp': datetime.now(timezone.utc).isoformat()
-                                }).eq('recipient_email', user['email']).execute()
+                                update_data = {
+                                    'guess_count': guesses_used + 1,
+                                    'guess_timestamp': datetime.now(timezone.utc).isoformat() # Update time on every guess
+                                }
+                                
+                                if is_correct:
+                                    update_data['is_correct_guess'] = True
+                                    update_data['guess_email'] = guessed_email
+                                else:
+                                    # If wrong, store it so we can exclude it next time
+                                    if guesses_used == 0:
+                                        update_data['first_wrong_guess'] = guessed_email
+                                
+                                supabase.table('assignments').update(update_data).eq('recipient_email', user['email']).execute()
                                 st.rerun()
+                                
+                    elif my_row.get('is_correct_guess'):
+                         st.success("✅ CORRECT! You nailed it.")
+                         st.caption("Check the leaderboard to see if you were fast enough!")
+                         
+                         if stage == 'grand_reveal':
+                            santa_info = get_user_by_email(my_row['santa_email'])
+                            st.balloons()
+                            st.markdown(f"### Your Santa was: **{santa_info['name']}**")
+                            
                     else:
-                        st.info("Guess locked in! Check the Leaderboard.")
+                        st.error("❌ Out of guesses!")
+                        st.write("Wait for the Grand Reveal to see who it was.")
+                        
                         if stage == 'grand_reveal':
                             santa_info = get_user_by_email(my_row['santa_email'])
                             st.balloons()
                             st.markdown(f"### Your Santa was: **{santa_info['name']}**")
-                            if my_row['is_correct_guess']:
-                                st.success("✅ You guessed CORRECTLY!")
-                            else:
-                                st.error("❌ Wrong guess.")
-                        else:
-                            st.write("Wait for the Grand Reveal...")
+
 
         # --- TAB 3: LEADERBOARD ---
         with tab_leaderboard:
             st.subheader("🏆 Speed Guessing Leaderboard")
             st.caption("Top 10 Fastest Correct Guesses get a prize!")
             
-            # --- FIXED CODE START ---
-            # Fetch ALL assignments first to avoid the "timestamp" database error
             response = supabase.table('assignments').select('recipient_email, guess_timestamp, is_correct_guess').execute()
             
             if not response.data:
                  st.write("No guesses yet...")
             else:
-                 # 1. Filter in Python: Keep only people who have actually guessed
                  guessed_only = [d for d in response.data if d['guess_timestamp'] is not None]
-                 
-                 # 2. Filter: Keep only CORRECT guesses
                  correct_guesses = [d for d in guessed_only if d['is_correct_guess']]
-                 
-                 # 3. Sort by time (Fastest first)
                  correct_guesses.sort(key=lambda x: x['guess_timestamp'])
                  
                  if not correct_guesses:
@@ -294,15 +351,11 @@ else:
                  else:
                      for idx, entry in enumerate(correct_guesses):
                          user_info = get_user_by_email(entry['recipient_email'])
-                         
-                         # Safety check: if user was deleted but assignment remains
                          if user_info:
                              rank = idx + 1
                              medal = "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else f"#{rank}"
                              if rank > 10: medal = "❌"
-                             
                              st.write(f"### {medal} {user_info['name']}")
-                             
                              if rank == 10:
                                  st.divider()
                                  st.caption("--- PRIZE CUTOFF ---")
