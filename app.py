@@ -273,30 +273,36 @@ else:
             st.subheader("🏆 Speed Guessing Leaderboard")
             st.caption("Top 10 Fastest Correct Guesses get a prize!")
             
-            # Fetch data logic
-            # Get all assignments where guess is correct
-            # Sort by timestamp
+            # --- FIXED CODE START ---
+            # Fetch ALL assignments first to avoid the "timestamp" database error
+            response = supabase.table('assignments').select('recipient_email, guess_timestamp, is_correct_guess').execute()
             
-            data = supabase.table('assignments').select('recipient_email, guess_timestamp, is_correct_guess').neq('guess_timestamp', 'null').execute().data
-            
-            # Filter correct only
-            correct_guesses = [d for d in data if d['is_correct_guess']]
-            # Sort by time
-            correct_guesses.sort(key=lambda x: x['guess_timestamp'])
-            
-            if not correct_guesses:
-                st.write("No correct guesses yet...")
+            if not response.data:
+                 st.write("No guesses yet...")
             else:
-                for idx, entry in enumerate(correct_guesses):
-                    user_info = get_user_by_email(entry['recipient_email'])
-                    
-                    # Formatting
-                    rank = idx + 1
-                    medal = "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else f"#{rank}"
-                    if rank > 10: medal = "❌"
-                    
-                    st.write(f"### {medal} {user_info['name']}")
-                    
-                    if rank == 10:
-                        st.divider()
-                        st.caption("--- PRIZE CUTOFF ---")
+                 # 1. Filter in Python: Keep only people who have actually guessed
+                 guessed_only = [d for d in response.data if d['guess_timestamp'] is not None]
+                 
+                 # 2. Filter: Keep only CORRECT guesses
+                 correct_guesses = [d for d in guessed_only if d['is_correct_guess']]
+                 
+                 # 3. Sort by time (Fastest first)
+                 correct_guesses.sort(key=lambda x: x['guess_timestamp'])
+                 
+                 if not correct_guesses:
+                     st.write("No correct guesses yet...")
+                 else:
+                     for idx, entry in enumerate(correct_guesses):
+                         user_info = get_user_by_email(entry['recipient_email'])
+                         
+                         # Safety check: if user was deleted but assignment remains
+                         if user_info:
+                             rank = idx + 1
+                             medal = "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else f"#{rank}"
+                             if rank > 10: medal = "❌"
+                             
+                             st.write(f"### {medal} {user_info['name']}")
+                             
+                             if rank == 10:
+                                 st.divider()
+                                 st.caption("--- PRIZE CUTOFF ---")
