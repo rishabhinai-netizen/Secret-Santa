@@ -100,7 +100,7 @@ def run_assignment():
     
     try:
         supabase.table('assignments').delete().neq('status', 'impossible').execute()
-        supabase.table('votes').delete().neq('voter_email', 'impossible').execute() # Clear old votes
+        supabase.table('votes').delete().neq('voter_email', 'impossible').execute() 
     except:
         pass 
     
@@ -166,7 +166,23 @@ if not st.session_state.user:
         consent = st.checkbox("I promise to play nicely.")
         
         if st.button("Join"):
-            if consent and new_email and c1 and c2 and c3 and sq1 and sq2 and sq3:
+            # --- STRICT VALIDATION START ---
+            missing = []
+            if not new_email: missing.append("Email")
+            if not new_name: missing.append("Name")
+            if not new_phrase: missing.append("Passphrase")
+            if not c1: missing.append("Clue 1")
+            if not c2: missing.append("Clue 2")
+            if not c3: missing.append("Clue 3")
+            if not sq1: missing.append("Star Question 1")
+            if not sq2: missing.append("Star Question 2")
+            if not sq3: missing.append("Star Question 3")
+            if not consent: missing.append("Consent Checkbox")
+
+            if len(missing) > 0:
+                st.error(f"⚠️ You cannot join yet! Please answer: {', '.join(missing)}")
+            else:
+            # --- VALIDATION PASSED ---
                 try:
                     supabase.table('participants').insert({
                         'email': new_email, 'name': new_name, 'passphrase': new_phrase,
@@ -176,8 +192,6 @@ if not st.session_state.user:
                     st.success("Signed up! Please Log In.")
                 except Exception as e:
                     st.error(f"Error: {e}")
-            else:
-                st.warning("Please fill ALL clues and questions!")
 
 else:
     # B. LOGGED IN DASHBOARD
@@ -209,7 +223,6 @@ else:
             
             st.write("---")
             st.write("**Game Flow Control**")
-            # Custom Order of Stages
             stage_order = ['signup', 'token_reveal', 'gift_hunt', 'star_voting', 'grand_reveal']
             new_stage = st.selectbox("Set Stage", stage_order)
             
@@ -259,7 +272,6 @@ else:
         target = get_user_by_email(assignment['recipient_email'])
         
         # --- TABS ---
-        # Tabs visibility depends on stage slightly, but we keep structure consistent
         tab_santa, tab_recipient, tab_leaderboard, tab_star, tab_help = st.tabs(["🎅 My Mission", "🎁 My Gift", "🏆 Speed Winners", "🌟 Star Game", "❓ Help"])
 
         # --- TAB 1: SANTA MISSION (BLIND) ---
@@ -297,7 +309,6 @@ else:
                 st.info("Wait for the Admin to start the Gift Hunt!")
             
             elif stage in ['gift_hunt', 'star_voting', 'grand_reveal']:
-                # REVEAL THEIR TOKEN SO THEY CAN FIND GIFT
                 st.markdown(f"# 🎫 Your Token: `{my_row['recipient_token']}`")
                 st.write("Go find the gift with this number on it!")
                 st.divider()
@@ -322,7 +333,6 @@ else:
                     if my_row['santa_clue_1']: st.info(f"\"{my_row['santa_clue_1']}\"")
                     else: st.warning("(Santa left no clue!)")
                     
-                    # GUESSING LOGIC
                     if not my_row.get('is_correct_guess') and guesses_used < 2:
                         st.write("#### ⚡ Fastest Finger First!")
                         people = get_all_participants_names()
@@ -360,7 +370,7 @@ else:
             st.subheader("🏆 Top 5 Speed Winners")
             response = supabase.table('assignments').select('recipient_email, guess_timestamp, is_correct_guess').execute()
             
-            top_5_emails = [] # Store for Star Game logic
+            top_5_emails = [] 
             if response.data:
                  guessed_only = [d for d in response.data if d['guess_timestamp'] is not None]
                  correct_guesses = [d for d in guessed_only if d['is_correct_guess']]
@@ -388,52 +398,52 @@ else:
             if stage != 'star_voting' and stage != 'grand_reveal':
                 st.info("This game unlocks after the gifts are opened!")
             else:
-                # 1. CHECK IF USER IS A SPEED WINNER (SPECTATOR)
                 top_5 = calculate_top_5_speed_winners()
                 
                 if user['email'] in top_5:
                     st.success("🏆 You are a Speed Winner! You are watching from the VIP Lounge.")
                     st.write("The remaining players are voting for the Star...")
                 else:
-                    # 2. VOTING INTERFACE
                     st.write("Vote for the person with the most interesting answers!")
                     st.caption("You cannot vote for yourself.")
                     
-                    # Check if already voted
                     my_vote = supabase.table('votes').select('*').eq('voter_email', user['email']).execute().data
                     
                     if my_vote:
                         st.success("✅ Vote Cast! Waiting for results.")
                     else:
-                        # Fetch candidates (Exclude Top 5 AND Self)
                         candidates = supabase.table('participants').select('*').eq('is_admin', False).execute().data
+                        # FILTER: Exclude Top 5 AND Exclude Self
                         valid_candidates = [c for c in candidates if c['email'] not in top_5 and c['email'] != user['email']]
                         
-                        # Display Anonymous Cards
-                        vote_choice = st.selectbox("Choose the best answers:", ["Select..."] + [f"Candidate {i+1}" for i in range(len(valid_candidates))])
+                        vote_choice = st.selectbox("Choose a Profile to Review:", ["Select..."] + [f"Anonymous Profile {i+1}" for i in range(len(valid_candidates))])
                         
                         if vote_choice != "Select...":
-                            idx = int(vote_choice.split(" ")[1]) - 1
+                            idx = int(vote_choice.split(" ")[2]) - 1
                             cand = valid_candidates[idx]
                             
+                            st.info("👇 Read their Answers below and Vote if you like them!")
                             st.markdown(f"""
-                            <div style="background-color:#262730; padding:15px; border-radius:10px; margin-bottom:10px;">
-                                <p><strong>Secretly Enjoys:</strong> {cand['star_q1']}</p>
-                                <p><strong>Wrong Assumption:</strong> {cand['star_q2']}</p>
-                                <p><strong>Weekend Hideout:</strong> {cand['star_q3']}</p>
+                            <div style="background-color:#262730; padding:15px; border-radius:10px; margin-bottom:10px; border:1px solid #4B4B4B;">
+                                <p style="color:#FFA500;"><strong>Q1: Secretly Enjoys?</strong></p>
+                                <p>{cand['star_q1']}</p>
+                                <hr>
+                                <p style="color:#FFA500;"><strong>Q2: Wrong Assumption?</strong></p>
+                                <p>{cand['star_q2']}</p>
+                                <hr>
+                                <p style="color:#FFA500;"><strong>Q3: Weekend Hideout?</strong></p>
+                                <p>{cand['star_q3']}</p>
                             </div>
                             """, unsafe_allow_html=True)
                             
-                            if st.button("Vote for this Candidate"):
+                            if st.button("⭐ Vote for this Profile"):
                                 supabase.table('votes').insert({'voter_email': user['email'], 'voted_for_email': cand['email']}).execute()
                                 st.rerun()
 
-                # 3. REVEAL WINNER (Only in Grand Reveal)
                 if stage == 'grand_reveal':
                     st.divider()
                     st.subheader("🌟 AND THE STAR IS...")
                     
-                    # Count Votes
                     votes = supabase.table('votes').select('voted_for_email').execute().data
                     if votes:
                         vote_counts = pd.Series([v['voted_for_email'] for v in votes]).value_counts()
@@ -443,12 +453,6 @@ else:
                         st.balloons()
                         st.markdown(f"# 🌟 {winner_info['name']} 🌟")
                         st.write(f"With {vote_counts.max()} votes!")
-                        
-                        st.write("---")
-                        st.write("Their Winning Answers:")
-                        st.write(f"**Enjoy:** {winner_info['star_q1']}")
-                        st.write(f"**Assumption:** {winner_info['star_q2']}")
-                        st.write(f"**Hideout:** {winner_info['star_q3']}")
                     else:
                         st.write("No votes cast yet.")
 
@@ -456,17 +460,14 @@ else:
         with tab_help:
             st.header("📖 How to Play")
             st.info("This is a **Double-Blind** Secret Santa!")
-            
-            st.subheader("1️⃣ Before Event (NOW)")
-            st.markdown("- Sign up and answer the Deep Questions.\n- **Admin** will generate assignments.")
-            st.markdown("- **Santa's Mission:** You will see a **Token Number** (e.g., #805) and Clues. You do NOT know the name. Buy a gift for that persona.")
-            
+            st.subheader("1️⃣ Before Event")
+            st.markdown("- Sign up and answer the questions.")
+            st.markdown("- **Santa's Mission:** You get a Token #. Buy a gift for that persona.")
             st.subheader("2️⃣ On Event Day")
-            st.markdown("- **Admin Triggers 'Token Reveal':** Write your Token # on the gift and put it on the table.")
-            st.markdown("- **Admin Triggers 'Gift Hunt':** You get *your* Token #. Find the gift with that number!")
-            st.markdown("- **Speed Game:** Open gift -> Read Santa's Clue -> Guess Santa. Top 5 Fastest win!")
-            
+            st.markdown("- **Token Reveal:** Write your Token # on the gift.")
+            st.markdown("- **Gift Hunt:** Find the gift with your Token #.")
+            st.markdown("- **Speed Game:** Guess Santa FAST! Top 5 win.")
             st.subheader("3️⃣ The Star Game")
-            st.markdown("- **Top 5 Speed Winners** are frozen (VIPs).")
-            st.markdown("- **Everyone Else:** Reads anonymous answers to the Deep Questions and votes for the best one.")
+            st.markdown("- **Top 5 Speed Winners** are VIP Spectators.")
+            st.markdown("- **Everyone Else:** Votes for the best anonymous answers.")
             st.markdown("- The Winner becomes the **Secret Santa Star**!")
