@@ -116,15 +116,27 @@ if not st.session_state.user:
         new_phrase = st.text_input("Create Passphrase", type="password")
         
         st.write("---")
-        st.write("📝 **Tell us about yourself (so your Santa can know you):**")
-        c1 = st.text_input("Clue 1: A hobby")
-        c2 = st.text_input("Clue 2: What are you most famous for in office?")
-        c3 = st.text_input("Clue 3: Your vibe (funny/joyful)")
+        st.write("📝 **Tell us about yourself (Your Santa will see this):**")
+        
+        # CLUE 1
+        st.write("**Clue 1 — My Non-Negotiable Daily Habit**")
+        st.caption("One thing I do almost every day that I genuinely miss if it doesn’t happen. (e.g., A quiet walk with my earphones, Writing a to-do list by hand, Gym or some movement, My morning coffee before I speak to anyone)")
+        c1 = st.text_input("Answer for Clue 1", placeholder="Your daily habit...")
+
+        # CLUE 2
+        st.write("**Clue 2 — Something Small That Instantly Lifts My Mood**")
+        st.caption("A simple thing that makes an ordinary day feel better. (e.g., A handwritten note, A clean desk setup, Funny Chitchat, Appreciation from my Boss)")
+        c2 = st.text_input("Answer for Clue 2", placeholder="Your mood lifter...")
+
+        # CLUE 3
+        st.write("**Clue 3 — One Thing I’d Never Buy for Myself (But Would Love to Receive)**")
+        st.caption("Something I enjoy but usually don’t spend money on. (e.g., A premium notebook, A desk plant, Laughing Buddha, Headphone)")
+        c3 = st.text_input("Answer for Clue 3", placeholder="Your wish...")
         
         consent = st.checkbox("I promise to play nicely.")
         
         if st.button("Join"):
-            if consent and new_email:
+            if consent and new_email and c1 and c2 and c3:
                 try:
                     supabase.table('participants').insert({
                         'email': new_email, 'name': new_name, 'passphrase': new_phrase,
@@ -133,10 +145,16 @@ if not st.session_state.user:
                     st.success("Signed up! Please Log In.")
                 except Exception as e:
                     st.error(f"Error: {e}")
+            else:
+                st.warning("Please fill all clues and fields!")
 
 else:
     # B. LOGGED IN DASHBOARD
     user = st.session_state.user
+    
+    # GLOBAL BANNER FOR EVENT DETAILS
+    st.info("📅 **Game Event:** 23rd December 2025 | ⏰ **5:00 PM** | 📍 **M8 Meeting Room**")
+    
     st.write(f"Hello, **{user['name']}**!")
     
     if st.button("Logout"):
@@ -149,13 +167,19 @@ else:
     if user['is_admin']:
         st.divider()
         st.subheader("🛡️ Admin Cockpit")
-        st.info(f"Current Stage: {stage}")
+        st.write(f"**Current Stage:** `{stage}`")
         
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("Generate Assignments (Exclude Me)"):
-                run_assignment()
+            # SAFETY LOCK: Only show Generate button if in Signup stage
+            if stage == 'signup':
+                if st.button("Generate Assignments (Exclude Me)"):
+                    run_assignment()
+            else:
+                st.warning("Assignments Locked. (Stage is not 'signup')")
+                st.caption("To regenerate, set stage back to 'signup' first.")
             
+            st.write("---")
             new_stage = st.selectbox("Set Stage", 
                 ['signup', 'clue_1', 'clue_2', 'clue_3', 'name_reveal', 'event_day', 'grand_reveal'])
             if st.button("Update Stage"):
@@ -211,7 +235,8 @@ else:
         # 1. WAITING ROOM (LOBBY)
         if stage == 'signup':
             st.subheader("☕ The Waiting Room")
-            st.info("The game hasn't started yet. Waiting for everyone to sign up!")
+            st.warning("All the users have not signed up yet!. Please wait")
+            
             st.write("### Who is already here?")
             participants = supabase.table('participants').select('name').eq('is_admin', False).execute().data
             for p in participants:
@@ -228,7 +253,7 @@ else:
             
         target = get_user_by_email(assignment['recipient_email'])
         
-        # --- TAB NAVIGATION (UPDATED WITH HELP TAB) ---
+        # --- TABS ---
         tab_santa, tab_recipient, tab_leaderboard, tab_help = st.tabs(["🎅 My Mission", "🎁 My Gift", "🏆 Leaderboard", "❓ How to Play"])
 
         # --- TAB 1: SANTA MISSION ---
@@ -239,9 +264,9 @@ else:
                 st.write("🕵️ **Target Identity: HIDDEN**")
 
             st.caption("Clues provided by your target:")
-            if stage != 'signup': st.info(f"1. Hobby: {target['clue_1']}")
-            if stage not in ['signup', 'clue_1']: st.info(f"2. Famous For: {target['clue_2']}")
-            if stage == 'clue_3' or stage in ['name_reveal', 'event_day', 'grand_reveal']: st.info(f"3. Vibe: {target['clue_3']}")
+            if stage != 'signup': st.info(f"1. Daily Habit: {target['clue_1']}")
+            if stage not in ['signup', 'clue_1']: st.info(f"2. Mood Lifter: {target['clue_2']}")
+            if stage == 'clue_3' or stage in ['name_reveal', 'event_day', 'grand_reveal']: st.info(f"3. Wishlist: {target['clue_3']}")
             
             st.divider()
             st.write("🕵️ **Provide 1 Clue About YOURSELF**")
@@ -344,7 +369,7 @@ else:
         # --- TAB 3: LEADERBOARD ---
         with tab_leaderboard:
             st.subheader("🏆 Speed Guessing Leaderboard")
-            st.caption("Top 10 Fastest Correct Guesses get a prize!")
+            st.caption("Top 5 Fastest Correct Guesses get a prize!")
             
             response = supabase.table('assignments').select('recipient_email, guess_timestamp, is_correct_guess').execute()
             
@@ -363,41 +388,37 @@ else:
                          if user_info:
                              rank = idx + 1
                              medal = "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else f"#{rank}"
-                             if rank > 10: medal = "❌"
+                             if rank > 5: medal = "❌"
+                             
                              st.write(f"### {medal} {user_info['name']}")
-                             if rank == 10:
+                             if rank == 5:
                                  st.divider()
-                                 st.caption("--- PRIZE CUTOFF ---")
+                                 st.caption("--- PRIZE CUTOFF (Top 5 Only) ---")
 
         # --- TAB 4: SOP / HELP MANUAL ---
         with tab_help:
             st.header("📖 How to Play")
-            
             st.info("👋 **Welcome to the Team Secret Santa!**\n\nYour goal: Give a great gift, keep your identity secret, and guess who your Santa is!")
-            
             st.subheader("1️⃣ Before the Event")
             st.markdown("""
             * **Check 'My Mission':** See who your target is and read their clues.
             * **Leave a Clue:** In the 'My Mission' tab, write ONE clue about yourself. This is the **only** hint your target will get!
             * **Buy the Gift:** Bring it to the event wrapped and labeled.
             """)
-            
             st.subheader("2️⃣ On Event Day")
             st.markdown("""
             * **Step A:** When you hold the physical gift box, click **'📦 I have RECEIVED'**.
             * **Step B:** Unwrap the gift! Then click **'🎁 I have OPENED'**.
             * **Step C:** The app will reveal **Santa's Clue** to you.
             """)
-            
             st.subheader("3️⃣ The Speed Game")
             st.warning("⚡ **This is a race!**")
             st.markdown("""
             * Once you see the clue, guess who your Santa is immediately.
-            * **Top 10 Fastest Correct Guessers** win an extra prize!
+            * **Top 5 Fastest Correct Guessers** win an extra prize!
             * You have **2 Chances**.
                 * Guess 1 Wrong? You get one more try.
                 * Guess 2 Wrong? You are out!
             """)
-            
             st.subheader("4️⃣ The Grand Reveal")
             st.success("🎉 Once everyone has guessed, the Admin will press the big red button and all identities will be revealed!")
